@@ -1,0 +1,402 @@
+{
+  "name": "Zaki, follow-up reminder for unanswered emails",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "6b5af66a-6d32-50b0-b9b1-f5df5ea81dff",
+      "name": "Every Morning 9 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 30,
+        "filters": {
+          "q": "in:sent newer_than:14d older_than:3d"
+        }
+      },
+      "id": "ed4deb05-0ca5-5358-b20f-9a6c3dbd0c96",
+      "name": "Find Sent Threads",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        240,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "thread",
+        "operation": "get",
+        "threadId": "={{ $json.id }}",
+        "simple": false,
+        "options": {
+          "returnOnlyMessages": true
+        }
+      },
+      "id": "aecd246b-80b6-5c60-8ead-06a1eae420ea",
+      "name": "Get Thread Messages",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst reminded = staticData.reminded || {};\nconst threads = {};\nfor (const item of $input.all()) {\n  const j = item.json;\n  const msgs = Array.isArray(j.messages) ? j.messages : [j];\n  for (const m of msgs) {\n    const tid = m.threadId || j.id;\n    if (!tid) continue;\n    if (!threads[tid]) threads[tid] = [];\n    threads[tid].push(m);\n  }\n}\nconst DAY = 24 * 3600 * 1000;\nconst now = Date.now();\nconst out = [];\nfor (const tid of Object.keys(threads)) {\n  if (reminded[tid]) continue;\n  const msgs = threads[tid].slice().sort((a, b) => Number(a.internalDate || 0) - Number(b.internalDate || 0));\n  const last = msgs[msgs.length - 1];\n  const labels = (last.labels || last.labelIds || []).map((l) => (typeof l === 'string' ? l : (l.id || l.name)));\n  if (!labels.includes('SENT') || labels.includes('DRAFT')) continue;\n  const ts = Number(last.internalDate || 0) || Date.parse(last.Date || '') || 0;\n  if (!ts) continue;\n  const ageDays = (now - ts) / DAY;\n  if (ageDays < 3 || ageDays > 14) continue;\n  const to = String(last.To || '');\n  if (!to || /no-?reply|noreply|do-?not-?reply|mailer-daemon/i.test(to)) continue;\n  const subject = String(last.Subject || '').trim();\n  out.push({ json: {\n    threadId: tid,\n    to: to,\n    subject: subject,\n    replySubject: /^re:/i.test(subject) ? subject : 'Re: ' + subject,\n    body: String(last.text || last.snippet || '').slice(0, 1500),\n    daysAgo: Math.floor(ageDays)\n  } });\n  if (out.length >= 5) break;\n}\nreturn out;"
+      },
+      "id": "4c93e5cb-9183-558a-8672-064bdd4b6bbf",
+      "name": "Find Unanswered Threads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Original email I sent (subject: {{ $json.subject }}, to: {{ $json.to }}, {{ $json.daysAgo }} days ago):\n\n{{ $json.body }}\n\nWrite the follow-up email body now.",
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You write short, polite follow-up emails for a busy professional whose earlier email got no reply. Rules: write in the SAME language and tone as the original email (Egyptian Arabic emails get polite Modern/Egyptian Arabic, English gets English). Maximum 4 sentences. Friendly, professional, not pushy. Reference the original topic briefly and end with a clear, easy next step. Output ONLY the email body text: no subject line, no explanations, no markdown."
+            }
+          ]
+        }
+      },
+      "id": "09d8a1a4-0433-5e8c-b52f-feabd552cd3e",
+      "name": "Write Follow-up Text",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash-lite",
+        "options": {}
+      },
+      "id": "4bdf12e2-a01c-520a-a825-0f7b4cb2758a",
+      "name": "Gemini Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        240
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "p1",
+              "name": "threadId",
+              "value": "={{ $(\"Find Unanswered Threads\").all()[$itemIndex].json.threadId }}",
+              "type": "string"
+            },
+            {
+              "id": "p2",
+              "name": "to",
+              "value": "={{ $(\"Find Unanswered Threads\").all()[$itemIndex].json.to }}",
+              "type": "string"
+            },
+            {
+              "id": "p3",
+              "name": "subject",
+              "value": "={{ $(\"Find Unanswered Threads\").all()[$itemIndex].json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "p4",
+              "name": "replySubject",
+              "value": "={{ $(\"Find Unanswered Threads\").all()[$itemIndex].json.replySubject }}",
+              "type": "string"
+            },
+            {
+              "id": "p5",
+              "name": "daysAgo",
+              "value": "={{ $(\"Find Unanswered Threads\").all()[$itemIndex].json.daysAgo }}",
+              "type": "number"
+            },
+            {
+              "id": "p6",
+              "name": "followUp",
+              "value": "={{ $json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "54fb6792-35c0-5574-a675-4969409ffb88",
+      "name": "Prepare Follow-up",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "={{ $json.replySubject }}",
+        "message": "={{ $json.followUp }}",
+        "options": {
+          "sendTo": "={{ $json.to }}",
+          "threadId": "={{ $json.threadId }}"
+        }
+      },
+      "id": "99bff1c7-bade-5b9c-b93a-ff93eddeba23",
+      "name": "Create Follow-up Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1480,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⏰ متابعة: عدّى {{ $(\"Prepare Follow-up\").all()[$itemIndex].json.daysAgo }} أيام على إيميلك لـ {{ $(\"Prepare Follow-up\").all()[$itemIndex].json.to }} بخصوص \"{{ $(\"Prepare Follow-up\").all()[$itemIndex].json.subject }}\" ومحدش رد.\n\nجهّزتلك مسودة متابعة:\n\n{{ $(\"Prepare Follow-up\").all()[$itemIndex].json.followUp }}\n\nاضغط على الزراير تحت علشان تبعت أو تعدّل أو تمسح.",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ ابعت",
+                    "additionalFields": {
+                      "callback_data": "={{ \"send:\" + $json.id }}"
+                    }
+                  },
+                  {
+                    "text": "✏️ عدّل",
+                    "additionalFields": {
+                      "callback_data": "={{ \"edit:\" + $json.id }}"
+                    }
+                  },
+                  {
+                    "text": "🗑️ امسح",
+                    "additionalFields": {
+                      "callback_data": "={{ \"delete:\" + $json.id }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "={{ \"None\" }}"
+        }
+      },
+      "id": "90d6b2c4-6a08-5725-9d25-4620db4a5f92",
+      "name": "Send Follow-up To Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1720,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst reminded = staticData.reminded || {};\nconst now = Date.now();\nfor (const item of $('Prepare Follow-up').all()) {\n  reminded[item.json.threadId] = now;\n}\nfor (const key of Object.keys(reminded)) {\n  if (now - reminded[key] > 30 * 24 * 3600 * 1000) delete reminded[key];\n}\nstaticData.reminded = reminded;\nreturn [{ json: { markedThreads: Object.keys(reminded).length } }];"
+      },
+      "id": "3a235b0d-0948-5368-8e63-25f85a66e156",
+      "name": "Mark As Reminded",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# ⏰ زكي — متابعة الإيميلات\nكل يوم الساعة 9 الصبح: بيدوّر على إيميلات بعتّها من 3 لـ 14 يوم ومحدش رد عليها، ويكتبلك مسودة متابعة ويبعتهالك على Telegram بأزرار ✅ ابعت · ✏️ عدّل · 🗑️ امسح.\n(الأزرار بيتعامل معاها workflow زكي الأساسي.) الحد الأقصى 5 تذكيرات في اليوم، ومبيكررش نفس المحادثة.\n\n⚠️ بدّل YOUR_TELEGRAM_CHAT_ID في node الإرسال بالـ ID بتاعك.",
+        "height": 220,
+        "width": 2200,
+        "color": 7
+      },
+      "id": "01aa240a-5a22-53d9-8e06-81a9b78a8548",
+      "name": "Note - Follow-up",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -320
+      ]
+    }
+  ],
+  "connections": {
+    "Every Morning 9 AM": {
+      "main": [
+        [
+          {
+            "node": "Find Sent Threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Sent Threads": {
+      "main": [
+        [
+          {
+            "node": "Get Thread Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Thread Messages": {
+      "main": [
+        [
+          {
+            "node": "Find Unanswered Threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Unanswered Threads": {
+      "main": [
+        [
+          {
+            "node": "Write Follow-up Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write Follow-up Text",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Follow-up Text": {
+      "main": [
+        [
+          {
+            "node": "Prepare Follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Follow-up": {
+      "main": [
+        [
+          {
+            "node": "Create Follow-up Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Follow-up Draft": {
+      "main": [
+        [
+          {
+            "node": "Send Follow-up To Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Follow-up To Telegram": {
+      "main": [
+        [
+          {
+            "node": "Mark As Reminded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Cairo"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "REPLACE_ON_IMPORT"
+  },
+  "tags": []
+}

@@ -1,0 +1,62 @@
+{
+  "name": "Error Alert to Telegram",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "46b20b36-88ec-57b1-a677-9273332de51e",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ حصلت مشكلة في الـ workflow\n\nالـ Workflow: {{ $json.workflow.name }}\nالـ Node اللي فشل: {{ $json.execution.lastNodeExecuted }}\nالخطأ: {{ $json.execution.error.message }}\n\nرابط التشغيل: {{ $json.execution.url }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "e1ba8726-0b03-5701-8a77-11646942d12d",
+      "name": "Send Error Alert to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        540,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Send Error Alert to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "REPLACE_ON_IMPORT"
+  },
+  "tags": []
+}
